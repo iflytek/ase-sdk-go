@@ -3,47 +3,40 @@ package ase
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gorilla/websocket"
-	"github.com/spf13/cast"
-)
-
-var (
-	ErrorConnDeadlined = errors.New("connection deadlined")
 )
 
 type ASE interface {
-	// Once send a http request to ASE server, and return the response body
-	Once(data interface{}) (body *Resp, err error)
-	// Stream send/receive requests/responses to/from ASE server in websockets asynchronously, wrapped Write/Read in loop.
-	// Streaming write data from data channel to ASE, and streaming read from ASE by providing a response handler.
-	Stream(data <-chan Request, respCallback func(resp *Resp) error) (err chan error, done chan struct{})
-	// Read data from ASE server in websockets
-	Read() (resp *Resp, err error)
-	// WriteJSON write data to ASE server in websockets
-	WriteJSON(data interface{}) error
+	// Once send a http request to ASE server, and return the response
+	Once(data *Request) (body []byte, err error)
+	// Receive data from ASE server in websockets
+	Receive() (body []byte, err error)
+	// Send data to ASE server in websockets
+	Send(data *Request) error
 	// Destroy resources
 	Destroy() error
 }
 
+type Sender func()
+
 type client struct {
 	appid, apikey, apiSecret string
-	endpoint                 string           // eg: https://iflytek.com
+	host                     string // eg: iflytek.com
+	tls                      bool
 	uri                      string           // eg: /ase/v1/ping
 	signAlg                  func() hash.Hash // hash algorithm using for signature
-	signedURL                string
 
-	decoder Decoder
+	signedHttpURL, signedWsURL string
+	decoder                    Decoder
 
 	*onceCaller
 	*streamCaller
@@ -53,26 +46,16 @@ type client struct {
 // endpoint: eg: https://iflytek.com
 // uri: eg: /ase/v1/ping
 // opts: eg: WithOnceTimeout(time.Second), WithOnceRetryCount(3)
-func NewClient(appid, apikey, apiSecret, endpoint, uri string, opts ...Option) (ASE, error) {
-	arr := strings.Split(endpoint, "//")
-	if len(arr) != 2 {
-		return nil, errors.New("endpoint format error")
-	}
-
-	if strings.HasPrefix(arr[0], "ws") && strings.HasPrefix(arr[0], "http") {
-		return nil, errors.New("endpoint format error")
-	}
-
+func NewClient(appid, apikey, apiSecret, host, uri string, opts ...Option) (ASE, error) {
 	c := &client{
 		appid:      appid,
 		apikey:     apikey,
 		apiSecret:  apiSecret,
-		endpoint:   endpoint,
+		host:       host,
 		uri:        uri,
 		onceCaller: &onceCaller{cli: resty.New()},
 		streamCaller: &streamCaller{
 			conn:             nil,
-			connDead:         make(chan struct{}),
 			once:             sync.Once{},
 			handshakeTimeout: 0,
 			readTimeout:      0,
@@ -85,20 +68,23 @@ func NewClient(appid, apikey, apiSecret, endpoint, uri string, opts ...Option) (
 		opt(c)
 	}
 
-	if c.decoder == nil {
-		c.decoder = &defaultDecoder{}
-	}
-
 	if c.signAlg == nil {
 		c.signAlg = sha256.New
 	}
 
-	c.signedURL = c.buildSignedURL(c.endpoint, uri)
+	c.signedWsURL = c.buildSignedURL(c.host, c.uri, http.MethodGet)
+	c.signedHttpURL = c.buildSignedURL(c.host, c.uri, http.MethodPost)
 
 	return c, nil
 }
 
 type Option func(*client)
+
+func WithTLS() Option {
+	return func(c *client) {
+		c.tls = true
+	}
+}
 
 func WithDecoder(decoder Decoder) Option {
 	return func(c *client) {
@@ -154,153 +140,66 @@ type onceCaller struct {
 
 type streamCaller struct {
 	conn             *websocket.Conn
-	connTimeout      time.Duration // 连接超时时间, 默认无
-	connDead         chan struct{}
-	handshakeTimeout time.Duration
+	connTimeout      time.Duration // 连接保活时间, 默认无
+	handshakeTimeout time.Duration // 握手超时时间, 默认无
 	readTimeout      time.Duration
 	writeTimeout     time.Duration
-	once             sync.Once
-	onceErr          error
+
+	once    sync.Once
+	onceErr error
 }
 
-func (c *client) Once(data interface{}) (body *Resp, err error) {
+func (c *client) Once(data *Request) (resp []byte, err error) {
 	var (
-		resp *resty.Response
+		res *resty.Response
 	)
 
-	resp, err = c.cli.R().
+	res, err = c.cli.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(data).
-		Post(c.signedURL)
+		Post(c.signedHttpURL)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("http_code: %d, http_msg: %s, body: %s", resp.StatusCode(), resp.Status(), string(resp.Body()))
+	if res.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("http_code: %d, http_msg: %s, body: %s", res.StatusCode(), res.Status(), string(res.Body()))
 	}
 
-	return c.decoder.Decode(resp.Body())
+	return res.Body(), nil
 }
 
-func (c *client) Stream(data <-chan Request, respCallback func(resp *Resp) error) (errChan chan error, done chan struct{}) {
-	errChan = make(chan error)
-	done = make(chan struct{})
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := c.loopRead(respCallback); err != nil {
-			errChan <- err
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := c.loopWrite(data); err != nil {
-			errChan <- err
-		}
-	}()
-
-	go func() {
-		wg.Wait()
-		done <- struct{}{}
-	}()
-
-	return
-}
-
-func (c *client) Read() (resp *Resp, err error) {
+func (c *client) Receive() (msg []byte, err error) {
 	c.once.Do(func() {
-		c.onceErr = c.initWebsocketConn(c.signedURL)
+		c.onceErr = c.initWebsocketConn(c.signedWsURL)
 	})
 
 	if c.onceErr != nil {
-		return nil, c.onError(c.onceErr)
+		return nil, c.onceErr
 	}
 
 	if c.readTimeout > 0 {
 		_ = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout))
 	}
 
-	var msg []byte
 	_, msg, err = c.conn.ReadMessage()
-	if err != nil {
-		return nil, c.onError(err)
-	}
-
-	resp, err = c.decoder.Decode(msg)
-	return resp, c.onError(err)
+	return
 }
 
-func (c *client) WriteJSON(v interface{}) (err error) {
+func (c *client) Send(v *Request) (err error) {
 	c.once.Do(func() {
-		c.onceErr = c.initWebsocketConn(c.signedURL)
+		c.onceErr = c.initWebsocketConn(c.signedWsURL)
 	})
 
 	if c.onceErr != nil {
-		return c.onError(c.onceErr)
+		return c.onceErr
 	}
 
 	if c.writeTimeout > 0 {
 		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
 
-	return c.onError(c.conn.WriteJSON(v))
-}
-
-func (c *client) onError(err error) error {
-	if err != nil {
-		_ = c.Destroy()
-	}
-	return err
-}
-
-func (c *client) loopRead(respCallback func(resp *Resp) error) error {
-	for {
-		select {
-		case <-c.connDead:
-			return ErrorConnDeadlined
-		default:
-			resp, err := c.Read()
-			if err != nil {
-				return err
-			}
-
-			if err = respCallback(resp); err != nil {
-				return err
-			}
-
-			if resp.Header.Status == StatusLastFrame {
-				_ = c.conn.Close()
-				return nil
-			}
-		}
-	}
-}
-
-func (c *client) loopWrite(data <-chan Request) error {
-	for {
-		select {
-		case req := <-data:
-			status, ok := req.Header["status"]
-			if !ok {
-				return errors.New("header.status is required")
-			}
-
-			if err := c.WriteJSON(req); err != nil {
-				return err
-			}
-
-			if cast.ToInt(status) == StatusLastFrame {
-				return nil
-			}
-		case <-c.connDead:
-			return ErrorConnDeadlined
-		}
-	}
+	return c.conn.WriteJSON(v)
 }
 
 func (c *client) initWebsocketConn(url string) error {
@@ -340,7 +239,7 @@ func (c *client) initWebsocketConn(url string) error {
 			defer tm.Stop()
 
 			<-tm.C
-			c.connDead <- struct{}{}
+			_ = c.conn.Close()
 		}()
 	}
 
@@ -357,19 +256,12 @@ func (c *client) Destroy() error {
 // buildSignedURL 创建带有签名的url
 // @endpoint such as ws://10.1.87.70:80
 // @uri such as /v1/ping
-func (c *client) buildSignedURL(endpoint, uri string) string {
+func (c *client) buildSignedURL(host, uri, method string) string {
 	// 签名时间
 	now := time.Now().UTC().Format(time.RFC1123)
 
-	method := http.MethodPost
-	if strings.HasPrefix(endpoint, "ws") {
-		method = http.MethodGet
-	}
-
-	endpoints := strings.Split(endpoint, "://")
-
 	// 待签名字符串
-	signText := fmt.Sprintf("host: %s\ndate: %s\n%s %s HTTP/1.1", endpoints[1], now, method, uri)
+	signText := fmt.Sprintf("host: %s\ndate: %s\n%s %s HTTP/1.1", host, now, method, uri)
 
 	// 签名结果
 	signature := NewSigner(c.apiSecret, c.signAlg).Sign([]byte(signText))
@@ -381,8 +273,24 @@ func (c *client) buildSignedURL(endpoint, uri string) string {
 	urls = base64.StdEncoding.EncodeToString([]byte(urls))
 
 	v := url.Values{}
-	v.Add("host", endpoints[1])
+	v.Add("host", host)
 	v.Add("date", now)
 	v.Add("authorization", urls)
-	return endpoint + uri + "?" + v.Encode()
+
+	return scheme(method, c.tls) + host + uri + "?" + v.Encode()
+}
+
+func scheme(method string, tls bool) string {
+	if method == http.MethodGet {
+		if tls {
+			return "wss://"
+		}
+		return "ws://"
+	}
+
+	if tls {
+		return "https://"
+	}
+
+	return "http://"
 }
