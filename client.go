@@ -29,14 +29,12 @@ type ASE interface {
 type Sender func()
 
 type client struct {
-	appid, apikey, apiSecret string
-	host                     string // eg: iflytek.com
-	tls                      bool
-	uri                      string           // eg: /ase/v1/ping
-	signAlg                  func() hash.Hash // hash algorithm using for signature
-
+	appid, apikey, apiSecret   string
+	host                       string // eg: iflytek.com
+	tls                        bool
+	uri                        string           // eg: /ase/v1/ping
+	signAlg                    func() hash.Hash // hash algorithm using for signature
 	signedHttpURL, signedWsURL string
-	decoder                    Decoder
 
 	*onceCaller
 	*streamCaller
@@ -83,12 +81,6 @@ type Option func(*client)
 func WithTLS() Option {
 	return func(c *client) {
 		c.tls = true
-	}
-}
-
-func WithDecoder(decoder Decoder) Option {
-	return func(c *client) {
-		c.decoder = decoder
 	}
 }
 

@@ -69,19 +69,19 @@ func (d *istDecoder) Decode(data []byte) (*ase.Resp, error) {
 	}, nil
 }
 
-type handler struct {
+type Handler struct {
 	bodyFile *os.File
 }
 
-func NewHandler() ase.RespHandler {
+func NewHandler() *Handler {
 	respFile, _ := os.Create("./resp.body.txt")
 
-	return &handler{
+	return &Handler{
 		bodyFile: respFile,
 	}
 }
 
-func (h *handler) Handle(data *ase.Resp) (err error) {
+func (h *Handler) Handle(data *ase.Resp) (err error) {
 	var b []byte
 	b, err = json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -98,6 +98,6 @@ func (h *handler) Handle(data *ase.Resp) (err error) {
 	return nil
 }
 
-func (h *handler) Destroy() error {
+func (h *Handler) Destroy() error {
 	return h.bodyFile.Close()
 }

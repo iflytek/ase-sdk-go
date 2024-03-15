@@ -34,7 +34,7 @@ func main() {
 		_ = h.Destroy()
 	}()
 
-	cli, err := ase.NewClient(appid, apikey, apiSecret, host, uri, ase.WithDecoder(&istDecoder{}))
+	cli, err := ase.NewClient(appid, apikey, apiSecret, host, uri)
 	if err != nil {
 		panic(err)
 	}
