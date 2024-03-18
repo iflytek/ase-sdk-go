@@ -38,7 +38,6 @@ func Trans(raw, from, to string) {
 		secret,
 		host,
 		uri,
-		ase.WithDecoder(&transDecoder{}),
 		ase.WithOnceTimeout(time.Second*5),
 		ase.WithOnceRetryCount(3),
 	)
@@ -72,4 +71,11 @@ func Trans(raw, from, to string) {
 	}
 
 	fmt.Printf("%s\n", string(resp))
+
+	res, err := new(transDecoder).Decode(resp)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf(res.Payload.(Payload).DecodedText.TransResult.Dst)
 }
