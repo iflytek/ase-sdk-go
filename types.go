@@ -130,3 +130,9 @@ type Header struct {
 	Sid     string `json:"sid"`
 	Status  int    `json:"status"`
 }
+
+type AIaaSRequest struct {
+	Common   map[string]interface{} `json:"common"`
+	Business map[string]interface{} `json:"business"`
+	Data     map[string]interface{} `json:"data"`
+}

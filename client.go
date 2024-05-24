@@ -3,6 +3,7 @@ package ase
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"io"
@@ -18,15 +19,17 @@ import (
 type ASE interface {
 	// Once send a http request to ASE server, and return the response
 	Once(data *Request) (body []byte, err error)
+	// OnceAIaaS send a http request to AIaaS server, and return the response
+	OnceAIaaS(data *AIaaSRequest) (body []byte, err error)
 	// Receive data from ASE server in websockets
 	Receive() (body []byte, err error)
 	// Send data to ASE server in websockets
 	Send(data *Request) error
+	// SendAIaaS data to AIaaS server in websockets
+	SendAIaaS(data *AIaaSRequest) error
 	// Destroy resources
 	Destroy() error
 }
-
-type Sender func()
 
 type client struct {
 	appid, apikey, apiSecret   string
@@ -41,7 +44,7 @@ type client struct {
 }
 
 // NewClient create a new client to ASE server.
-// endpoint: eg: https://iflytek.com
+// host: eg: iflytek.com
 // uri: eg: /ase/v1/ping
 // opts: eg: WithOnceTimeout(time.Second), WithOnceRetryCount(3)
 func NewClient(appid, apikey, apiSecret, host, uri string, opts ...Option) (ASE, error) {
@@ -161,6 +164,32 @@ func (c *client) Once(data *Request) (resp []byte, err error) {
 	return res.Body(), nil
 }
 
+func (c *client) OnceAIaaS(data *AIaaSRequest) (resp []byte, err error) {
+	var (
+		res  *resty.Response
+		body []byte
+	)
+
+	body, err = json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err = c.cli.R().
+		SetHeaders(c.buildAIaaSHeader(body)).
+		SetBody(body).
+		Post(scheme(http.MethodPost, c.tls) + c.host + c.uri)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("http_code: %d, http_msg: %s, body: %s", res.StatusCode(), res.Status(), string(res.Body()))
+	}
+
+	return res.Body(), nil
+}
+
 func (c *client) Receive() (msg []byte, err error) {
 	c.once.Do(func() {
 		c.onceErr = c.initWebsocketConn(c.signedWsURL)
@@ -179,6 +208,22 @@ func (c *client) Receive() (msg []byte, err error) {
 }
 
 func (c *client) Send(v *Request) (err error) {
+	c.once.Do(func() {
+		c.onceErr = c.initWebsocketConn(c.signedWsURL)
+	})
+
+	if c.onceErr != nil {
+		return c.onceErr
+	}
+
+	if c.writeTimeout > 0 {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	}
+
+	return c.conn.WriteJSON(v)
+}
+
+func (c *client) SendAIaaS(v *AIaaSRequest) (err error) {
 	c.once.Do(func() {
 		c.onceErr = c.initWebsocketConn(c.signedWsURL)
 	})
