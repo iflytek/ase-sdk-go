@@ -27,13 +27,18 @@ func main() {
 		"/example",
 		ase.WithOnceTimeout(time.Second*3),
 		ase.WithOnceRetryCount(3),
+		ase.WithTLS(),
 	)
 	if err != nil {
 		panic(err)
 	}
 
+	headers := ase.RequestHeader{}
+	headers.SetAppID(appid)
+	headers.SetStatus(ase.StatusForOnce)
+	
 	req := new(ase.Request)
-	req.SetHeaders(&ase.RequestHeader{})
+	req.SetHeaders(headers)
 	req.SetParameters(map[string]interface{}{})
 	req.SetPayloads(map[string]interface{}{})
 
@@ -108,8 +113,12 @@ func main() {
 			status = ase.StatusContinue
 		}
 
+		headers := ase.RequestHeader{}
+		headers.SetAppID(appid)
+		headers.SetStatus(status)
+		
 		req := new(ase.Request)
-		req.SetHeaders(&ase.RequestHeader{Status: status})
+		req.SetHeaders(headers)
 		req.SetParameters(map[string]interface{}{})
 		req.SetPayloads(map[string]interface{}{})
 

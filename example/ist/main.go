@@ -56,14 +56,15 @@ func main() {
 			status = ase.StatusContinue
 		}
 
+		headers := ase.RequestHeader{}
+		headers.SetAppID(appid)
+		headers.SetStatus(status)
+
 		req := new(ase.Request)
-		req.SetHeaders(&ase.RequestHeader{
-			AppId:  appid,
-			Status: status,
-		})
+		req.SetHeaders(headers)
 		if status == ase.StatusFirstFrame {
 			req.SetParameters(map[string]interface{}{
-				"iat": map[string]interface{}{
+				"ist": map[string]interface{}{
 					//"dwa":      "wpgs",
 					"language": "en_us",
 					"result": map[string]interface{}{

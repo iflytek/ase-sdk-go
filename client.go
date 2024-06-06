@@ -32,12 +32,11 @@ type ASE interface {
 }
 
 type client struct {
-	appid, apikey, apiSecret   string
-	host                       string // eg: iflytek.com
-	tls                        bool
-	uri                        string           // eg: /ase/v1/ping
-	signAlg                    func() hash.Hash // hash algorithm using for signature
-	signedHttpURL, signedWsURL string
+	appid, apikey, apiSecret string
+	host                     string // eg: iflytek.com
+	tls                      bool
+	uri                      string           // eg: /ase/v1/ping
+	signAlg                  func() hash.Hash // hash algorithm using for signature
 
 	*onceCaller
 	*streamCaller
@@ -72,9 +71,6 @@ func NewClient(appid, apikey, apiSecret, host, uri string, opts ...Option) (ASE,
 	if c.signAlg == nil {
 		c.signAlg = sha256.New
 	}
-
-	c.signedWsURL = c.buildSignedURL(c.host, c.uri, http.MethodGet)
-	c.signedHttpURL = c.buildSignedURL(c.host, c.uri, http.MethodPost)
 
 	return c, nil
 }
@@ -129,6 +125,12 @@ func WithStreamConnTimeout(timeout time.Duration) Option {
 	}
 }
 
+func WithStreamDialHeader(header http.Header) Option {
+	return func(c *client) {
+		c.streamDialHeader = header
+	}
+}
+
 type onceCaller struct {
 	cli *resty.Client
 }
@@ -139,6 +141,7 @@ type streamCaller struct {
 	handshakeTimeout time.Duration // 握手超时时间, 默认无
 	readTimeout      time.Duration
 	writeTimeout     time.Duration
+	streamDialHeader http.Header
 
 	once    sync.Once
 	onceErr error
@@ -152,7 +155,7 @@ func (c *client) Once(data *Request) (resp []byte, err error) {
 	res, err = c.cli.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(data).
-		Post(c.signedHttpURL)
+		Post(c.buildSignedURL(c.host, c.uri, http.MethodPost))
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +195,7 @@ func (c *client) OnceAIaaS(data *AIaaSRequest) (resp []byte, err error) {
 
 func (c *client) Receive() (msg []byte, err error) {
 	c.once.Do(func() {
-		c.onceErr = c.initWebsocketConn(c.signedWsURL)
+		c.onceErr = c.initWebsocketConn()
 	})
 
 	if c.onceErr != nil {
@@ -209,7 +212,7 @@ func (c *client) Receive() (msg []byte, err error) {
 
 func (c *client) Send(v *Request) (err error) {
 	c.once.Do(func() {
-		c.onceErr = c.initWebsocketConn(c.signedWsURL)
+		c.onceErr = c.initWebsocketConn()
 	})
 
 	if c.onceErr != nil {
@@ -225,7 +228,7 @@ func (c *client) Send(v *Request) (err error) {
 
 func (c *client) SendAIaaS(v *AIaaSRequest) (err error) {
 	c.once.Do(func() {
-		c.onceErr = c.initWebsocketConn(c.signedWsURL)
+		c.onceErr = c.initWebsocketConn()
 	})
 
 	if c.onceErr != nil {
@@ -239,7 +242,7 @@ func (c *client) SendAIaaS(v *AIaaSRequest) (err error) {
 	return c.conn.WriteJSON(v)
 }
 
-func (c *client) initWebsocketConn(url string) error {
+func (c *client) initWebsocketConn() error {
 	d := websocket.Dialer{
 		NetDial:           nil,
 		NetDialContext:    nil,
@@ -260,7 +263,7 @@ func (c *client) initWebsocketConn(url string) error {
 		resp *http.Response
 	)
 
-	c.conn, resp, err = d.Dial(url, nil)
+	c.conn, resp, err = d.Dial(c.buildSignedURL(c.host, c.uri, http.MethodGet), c.streamDialHeader)
 	if err != nil {
 		return err
 	}

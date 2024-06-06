@@ -40,20 +40,22 @@ func Trans(raw, from, to string) {
 		uri,
 		ase.WithOnceTimeout(time.Second*5),
 		ase.WithOnceRetryCount(3),
+		ase.WithTLS(),
 	)
 	if err != nil {
 		panic(err)
 	}
 
+	headers := ase.RequestHeader{}
+	headers.SetAppID(appid)
+	headers.SetStatus(ase.StatusForOnce)
+
 	req := new(ase.Request)
-	req.SetHeaders(&ase.RequestHeader{
-		AppId:  appid,
-		Status: ase.StatusForOnce,
-	})
+	req.SetHeaders(headers)
 	req.SetParameters(map[string]interface{}{
 		"its": map[string]interface{}{
-			"from":   "cn",
-			"to":     "en",
+			"from":   from,
+			"to":     to,
 			"domain": "common",
 			"result": map[string]interface{}{},
 		},

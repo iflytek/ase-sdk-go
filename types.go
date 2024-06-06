@@ -8,7 +8,7 @@ const (
 )
 
 type Request struct {
-	Header    *RequestHeader         `json:"header"`
+	Header    RequestHeader          `json:"header"`
 	Parameter map[string]interface{} `json:"parameter,omitempty"`
 	Payload   map[string]interface{} `json:"payload"`
 }
@@ -43,21 +43,29 @@ type ImagePayload struct {
 //}
 
 // RequestHeader 平台参数
-type RequestHeader struct {
-	AppId     string      `json:"app_id,omitempty"`
-	Uid       string      `json:"uid,omitempty"`
-	Did       string      `json:"did,omitempty"`
-	Imei      string      `json:"imei,omitempty"`
-	Imsi      string      `json:"imsi,omitempty"`
-	Mac       string      `json:"mac,omitempty"`
-	NetType   string      `json:"net_type,omitempty"`
-	NetIsp    string      `json:"net_isp,omitempty"`
-	Status    int         `json:"status"`
-	RequestId interface{} `json:"request_id,omitempty"`
-	ResId     string      `json:"res_id,omitempty"`
+type RequestHeader map[string]interface{}
+
+func (h RequestHeader) Set(key, value string) {
+	h[key] = value
 }
 
-func (req *Request) SetHeaders(headers *RequestHeader) {
+func (h RequestHeader) SetAppID(appid string) {
+	h["app_id"] = appid
+}
+
+func (h RequestHeader) SetStatus(status int) {
+	h["status"] = status
+}
+
+func (h RequestHeader) SetResID(resId string) {
+	h["res_id"] = resId
+}
+
+func (h RequestHeader) SetDirectEng(eng string) {
+	h["directEngIp"] = eng
+}
+
+func (req *Request) SetHeaders(headers RequestHeader) {
 	req.Header = headers
 }
 
@@ -92,20 +100,6 @@ func (req *Request) SetImagePayload(key string, payload *ImagePayload) {
 	}
 	req.Payload[key] = payload
 }
-
-//func (req *Request) SetVideoPayload(key string, payload *VideoPayload) {
-//	if req.Payload == nil {
-//		req.Payload = make(map[string]interface{})
-//	}
-//	req.Payload[key] = payload
-//}
-//
-//func (req *Request) SetResourcePayload(key string, payload *ResourcePayload) {
-//	if req.Payload == nil {
-//		req.Payload = make(map[string]interface{})
-//	}
-//	req.Payload[key] = payload
-//}
 
 func (req *Request) SetPayload(key string, value interface{}) {
 	if req.Payload == nil {
