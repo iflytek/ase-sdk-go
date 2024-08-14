@@ -8,9 +8,9 @@ const (
 )
 
 type Request struct {
-	Header    RequestHeader          `json:"header"`
+	Header    RequestHeader          `json:"header,omitempty"`
 	Parameter map[string]interface{} `json:"parameter,omitempty"`
-	Payload   map[string]interface{} `json:"payload"`
+	Payload   map[string]interface{} `json:"payload,omitempty"`
 }
 
 type TextPayload struct {
@@ -126,7 +126,7 @@ type Header struct {
 }
 
 type AIaaSRequest struct {
-	Common   map[string]interface{} `json:"common"`
-	Business map[string]interface{} `json:"business"`
-	Data     map[string]interface{} `json:"data"`
+	Common   map[string]interface{} `json:"common,omitempty"`
+	Business map[string]interface{} `json:"business,omitempty"`
+	Data     map[string]interface{} `json:"data,omitempty"`
 }
